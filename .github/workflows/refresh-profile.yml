@@ -19,18 +19,22 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-      - name: Fetch public GitHub stats
+      - name: Install the terminal renderer dependency
+        run: |
+          python3 -m venv "$RUNNER_TEMP/foxtrot-venv"
+          "$RUNNER_TEMP/foxtrot-venv/bin/python" -m pip install --disable-pip-version-check Pillow==13.0.0
+      - name: Fetch public stats and render the terminal GIF
         env:
           GITHUB_TOKEN: ${{ github.token }}
           PROFILE_STATS_TOKEN: ${{ secrets.PROFILE_STATS_TOKEN }}
-        run: python3 scripts/refresh_stats.py
+        run: '"$RUNNER_TEMP/foxtrot-venv/bin/python" scripts/refresh_stats.py'
       - name: Commit updated console
         run: |
-          if git diff --quiet -- README.md; then
+          git add -- assets/terminal.gif
+          if git diff --cached --quiet -- assets/terminal.gif; then
             exit 0
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -- README.md
-          git commit -m 'Refresh foxtrot profile stats'
+          git commit -m 'Refresh foxtrot profile stats' -- assets/terminal.gif
           git push
