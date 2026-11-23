@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Update the foxtrot console from GitHub's public APIs."""
+"""Refresh the animated foxtrot console from GitHub's public APIs."""
 
 from __future__ import annotations
 
@@ -11,17 +11,19 @@ import os
 from pathlib import Path
 import re
 import sys
-from tempfile import NamedTemporaryFile
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
+if __package__:
+    from .render_terminal import write_terminal_gif
+else:
+    from render_terminal import write_terminal_gif
+
 
 API = "https://api.github.com"
 LOGIN = "RedstoneLord"
-START = "<!-- foxtrot-stats:start -->"
-END = "<!-- foxtrot-stats:end -->"
-README = Path(__file__).resolve().parents[1] / "README.md"
+TERMINAL = Path(__file__).resolve().parents[1] / "assets" / "terminal.gif"
 CONTRIBUTIONS_QUERY = """
 query FoxtrotCommits($login: String!, $from: DateTime!, $until: DateTime!) {
   user(login: $login) {
@@ -178,81 +180,42 @@ def collect_console(api, login, now):
 
     total_bytes = sum(languages.values())
     ranked = sorted(languages.items(), key=lambda item: (-item[1], item[0].casefold()))
-    language_rows = [f"  {short_label(name, 22):<22} {size / total_bytes:>6.1%}"
-                     for name, size in ranked[:4] if size and total_bytes]
-    lines = [
-        "```text",
-        "foxtrot@array> sv.ping",
-        "[station] link established",
-        "",
-        "foxtrot@array> sd.calch",
-        "[station] reflector aligned",
-        "",
-        "foxtrot@array> github.status",
-        f"[github] {login}",
-        f"Sync          {now.date().isoformat()} UTC",
-        f"Commits 365d  {commits:,}",
-        f"              {source}",
-        f"Stars earned  {stars:,}",
-        "",
-        "Top languages by bytes",
-        *(language_rows or ["  No language data"]),
-        "",
-        "Recent public activity",
-        *(activity_rows(events, login) or ["  No recent public activity"]),
-        "```",
+    labels = [f"{short_label(name, 15)} {size / total_bytes:.1%}"
+              for name, size in ranked[:4] if size and total_bytes]
+    language_rows = [f"{labels[index]:<26} {labels[index+1] if index+1 < len(labels) else ''}".rstrip()
+                     for index in range(0, len(labels), 2)]
+    return [
+        ("heading", f"[github] {short_label(login, 32)}  {now.date().isoformat()} UTC"),
+        ("reply", f"Commits (365d) {commits:,}   Stars earned {stars:,}"),
+        ("muted", f"Source: {source}"),
+        ("heading", "Top languages by bytes"),
+        *(("reply", row) for row in language_rows or ["No language data"]),
+        ("heading", "Recent public activity"),
+        *(("reply", row) for row in activity_rows(events, login) or ["No recent public activity"]),
     ]
-    return "\n".join(lines)
-
-
-def replace_console(readme, console):
-    marker = re.compile(rf"(?m)^(?:{re.escape(START)}|{re.escape(END)})$")
-    markers = list(marker.finditer(readme))
-    if [match.group() for match in markers] != [START, END]:
-        raise ValueError("README needs one foxtrot stats start marker and one end marker, in order")
-    start, end = markers
-    return readme[:start.end()] + "\n" + console + "\n" + readme[end.start():]
-
-
-def write_readme(path, content):
-    with NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as handle:
-        temporary = Path(handle.name)
-        try:
-            handle.write(content)
-            handle.close()
-            temporary.chmod(path.stat().st_mode & 0o777)
-            temporary.replace(path)
-        finally:
-            temporary.unlink(missing_ok=True)
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--user", default=LOGIN, help="GitHub username")
-    parser.add_argument("--readme", type=Path, default=README, help="README to refresh")
-    parser.add_argument("--dry-run", action="store_true", help="Print the refreshed console")
+    parser.add_argument("--output", type=Path, default=TERMINAL, help="Destination terminal GIF")
+    parser.add_argument("--dry-run", action="store_true", help="Print the refreshed stats")
     args = parser.parse_args(argv)
     if not re.fullmatch(r"[A-Za-z0-9-]{1,39}", args.user):
         parser.error("--user must be a GitHub username")
 
     try:
-        with args.readme.open(encoding="utf-8", newline="") as handle:
-            previous = handle.read()
-        newline = "\r\n" if "\r\n" in previous else "\n"
-        original = previous.replace("\r\n", "\n")
         api = GitHub(os.getenv("GITHUB_TOKEN"), os.getenv("PROFILE_STATS_TOKEN"))
         now = datetime.now(UTC).replace(microsecond=0)
         console = collect_console(api, args.user, now)
-        updated = replace_console(original, console)
         if args.dry_run:
-            print(console)
-        elif updated != original:
-            write_readme(args.readme, updated.replace("\n", newline))
-            print("Updated the foxtrot stats console.")
+            print("\n".join(line for _, line in console))
+        elif write_terminal_gif(args.output, console):
+            print("Updated the foxtrot terminal GIF.")
         else:
-            print("The foxtrot stats console is up to date.")
+            print("The foxtrot terminal GIF is up to date.")
     except (GitHubError, KeyError, TypeError, ValueError, OSError) as error:
-        print(f"Stats refresh failed. The existing README was kept. {error}", file=sys.stderr)
+        print(f"Stats refresh failed. The existing terminal GIF was kept. {error}", file=sys.stderr)
         return 1
     return 0
 
